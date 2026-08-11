@@ -3,6 +3,7 @@ package com.wachipayoxx.wbackpacks.client;
 import com.wachipayoxx.wbackpacks.backpack.BackpackAccess;
 import com.wachipayoxx.wbackpacks.network.RequestOpenBackpackPayload;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -12,6 +13,7 @@ import java.util.Set;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
+import net.minecraft.client.renderer.Rect2i;
 import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.item.ItemStack;
 import net.neoforged.neoforge.network.PacketDistributor;
@@ -144,6 +146,18 @@ public final class BackpackWindowManager {
 
     public boolean blocksPoint(double mouseX, double mouseY) {
         return topAt(mouseX, mouseY) != null;
+    }
+
+    public Collection<Rect2i> exclusionAreas() {
+        List<Rect2i> areas = new ArrayList<>();
+        Minecraft minecraft = Minecraft.getInstance();
+        if (!(minecraft.screen instanceof AbstractContainerScreen<?>)) {
+            return areas;
+        }
+        for (BackpackWindow window : openWindows()) {
+            areas.add(new Rect2i(window.x(), window.y(), window.width(), window.height()));
+        }
+        return areas;
     }
 
     private void bringToFront(BackpackWindow window) {
