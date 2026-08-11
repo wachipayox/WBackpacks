@@ -1,25 +1,28 @@
+# WBackpacks
 
-Installation information
-=======
+A NeoForge 1.21.1 backpack mod by **Wachipayoxx** focused on one idea: backpack storage should live directly inside the inventory screens you already use.
 
-This template repository can be directly cloned to get you started with a new
-mod. Simply create a new repository cloned from this one, by following the
-instructions provided by [GitHub](https://docs.github.com/en/repositories/creating-and-managing-repositories/creating-a-repository-from-a-template).
+Instead of opening a dedicated backpack screen, WBackpacks exposes each backpack as a movable desktop-style window layered over normal container screens. Multiple backpack windows can stay open at once, can be moved and closed independently, and remember their layout between sessions.
 
-Once you have your clone, simply open the repository in the IDE of your choice. The usual recommendation for an IDE is either IntelliJ IDEA or Eclipse.
+## Design goals
 
-If at any point you are missing libraries in your IDE, or you've run into problems you can
-run `gradlew --refresh-dependencies` to refresh the local cache. `gradlew clean` to reset everything 
-{this does not affect your code} and then start the process again.
+- No separate backpack GUI.
+- Open backpacks from ordinary container screens, including the player inventory and chest-like screens.
+- Multiple movable backpack windows with persistent positions and z-order.
+- Server-authoritative item movement.
+- Configurable backpack capacity for modpacks without deleting overflow contents if capacity is later reduced.
+- Backpack windows take input priority over the screen underneath them and are rendered as the top inventory layer, with compatibility hooks for recipe/item viewers such as JEI.
 
-Mapping Names:
-============
-By default, the MDK is configured to use the official mapping names from Mojang for methods and fields 
-in the Minecraft codebase. These names are covered by a specific license. All modders should be aware of this
-license. For the latest license text, refer to the mapping file itself, or the reference copy here:
-https://github.com/NeoForged/NeoForm/blob/main/Mojang.md
+## Current development milestone
 
-Additional Resources: 
-==========
-Community Documentation: https://docs.neoforged.net/  
-NeoForged Discord: https://discord.neoforged.net/
+The first milestone implements the base backpack, component-backed storage, window manager, persistence, container-screen integration and authoritative slot interactions. Additional backpack types/upgrades are intentionally out of scope until the window interaction is solid.
+
+## Platform
+
+- Minecraft 1.21.1
+- NeoForge 21.1.x
+- Java 21
+
+## Author
+
+Wachipayoxx
