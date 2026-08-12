@@ -40,12 +40,19 @@ public record MenuSlotQuickMovePayload(String backpackId, int menuSlot) implemen
             return;
         }
 
+        boolean sourceIsExternal = source.container != player.getInventory();
         ItemStack backpack = BackpackAccess.findOwned(player, payload.backpackId);
         if (backpack.isEmpty()) {
+            if (sourceIsExternal) {
+                fallbackToVanillaQuickMove(player, payload.menuSlot);
+            }
             return;
         }
         IItemHandler handler = BackpackAccess.handler(backpack);
         if (handler == null) {
+            if (sourceIsExternal) {
+                fallbackToVanillaQuickMove(player, payload.menuSlot);
+            }
             return;
         }
 
@@ -54,7 +61,6 @@ public record MenuSlotQuickMovePayload(String backpackId, int menuSlot) implemen
             return;
         }
 
-        boolean sourceIsExternal = source.container != player.getInventory();
         ItemStack remainder = sourceStack.copy();
 
         // Backpacks are deliberately not nested. A backpack coming from a chest can still fall
@@ -84,6 +90,12 @@ public record MenuSlotQuickMovePayload(String backpackId, int menuSlot) implemen
         }
         source.onTake(player, taken);
 
+        player.getInventory().setChanged();
+        player.containerMenu.broadcastChanges();
+    }
+
+    private static void fallbackToVanillaQuickMove(ServerPlayer player, int menuSlot) {
+        player.containerMenu.quickMoveStack(player, menuSlot);
         player.getInventory().setChanged();
         player.containerMenu.broadcastChanges();
     }
