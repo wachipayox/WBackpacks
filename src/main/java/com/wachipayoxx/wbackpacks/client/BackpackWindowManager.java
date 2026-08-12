@@ -1,5 +1,6 @@
 package com.wachipayoxx.wbackpacks.client;
 
+import com.mojang.blaze3d.systems.RenderSystem;
 import com.wachipayoxx.wbackpacks.backpack.BackpackAccess;
 import com.wachipayoxx.wbackpacks.network.RequestOpenBackpackPayload;
 import java.util.ArrayList;
@@ -17,6 +18,7 @@ import net.minecraft.client.renderer.Rect2i;
 import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.item.ItemStack;
 import net.neoforged.neoforge.network.PacketDistributor;
+import org.lwjgl.glfw.GLFW;
 
 public final class BackpackWindowManager {
     private static final BackpackWindowManager INSTANCE = new BackpackWindowManager();
@@ -27,9 +29,16 @@ public final class BackpackWindowManager {
     private final BackpackWindowStateStore state = new BackpackWindowStateStore();
 
     private BackpackWindow dragging;
+    private ResizeSession resizing;
     private int dragOffsetX;
     private int dragOffsetY;
     private int nextZ = 1;
+
+    private long resizeEwCursor;
+    private long resizeNsCursor;
+    private long resizeNwseCursor;
+    private long resizeNeswCursor;
+    private long activeCursor;
 
     public static BackpackWindowManager get() {
         return INSTANCE;
@@ -54,13 +63,17 @@ public final class BackpackWindowManager {
         int cascade = openWindows().size() * 12;
         int fallbackX = 8 + cascade;
         int fallbackY = Math.max(8, (minecraft.getWindow().getGuiScaledHeight() - 90) - cascade);
+        int defaultColumns = Math.min(9, Math.max(1, capacity));
+        int defaultRows = Math.min(6, (Math.max(1, capacity) + defaultColumns - 1) / defaultColumns);
         BackpackWindow window = new BackpackWindow(
                 id,
                 capacity,
                 state.x(id, fallbackX),
                 state.y(id, fallbackY),
                 Math.max(state.z(id, nextZ), nextZ++),
-                state.scroll(id));
+                state.scroll(id),
+                state.columns(id, defaultColumns),
+                state.rows(id, defaultRows));
         windows.put(id, window);
         bringToFront(window);
         restoreRequests.remove(id);
@@ -69,6 +82,14 @@ public final class BackpackWindowManager {
 
     public void render(AbstractContainerScreen<?> screen, GuiGraphics graphics, int mouseX, int mouseY) {
         requestPersistedWindows(screen);
+
+        // Vanilla inventory entity previews and item rendering use depth. Flush everything that the
+        // underlying screen queued, then draw WBackpacks as a true overlay with depth disabled.
+        graphics.flush();
+        RenderSystem.disableDepthTest();
+        graphics.pose().pushPose();
+        graphics.pose().translate(0.0F, 0.0F, 1000.0F);
+
         List<BackpackWindow> ordered = openWindows();
         ordered.sort(Comparator.comparingInt(BackpackWindow::zIndex));
         for (BackpackWindow window : ordered) {
@@ -89,34 +110,73 @@ public final class BackpackWindowManager {
             graphics.renderItem(carried, mouseX - 8, mouseY - 8);
             graphics.renderItemDecorations(Minecraft.getInstance().font, carried, mouseX - 8, mouseY - 8);
         }
+
+        graphics.pose().popPose();
+        graphics.flush();
+        RenderSystem.enableDepthTest();
+        updateCursor(mouseX, mouseY);
     }
 
     public boolean mousePressed(double mouseX, double mouseY, int button, boolean shiftDown) {
+        if (button == GLFW.GLFW_MOUSE_BUTTON_LEFT) {
+            ResizeTarget resizeTarget = topResizeAt(mouseX, mouseY);
+            if (resizeTarget != null) {
+                BackpackWindow window = resizeTarget.window();
+                bringToFront(window);
+                resizing = new ResizeSession(
+                        window,
+                        resizeTarget.edge(),
+                        mouseX,
+                        mouseY,
+                        window.x(),
+                        window.y(),
+                        window.visibleColumns(),
+                        window.visibleRows());
+                return true;
+            }
+        }
+
         BackpackWindow window = topAt(mouseX, mouseY);
         if (window == null) {
             return false;
         }
         bringToFront(window);
-        if (button == 0 && window.closeContains(mouseX, mouseY)) {
+        if (button == GLFW.GLFW_MOUSE_BUTTON_LEFT && window.closeContains(mouseX, mouseY)) {
             window.setOpen(false);
             state.save(window);
             return true;
         }
-        if (button == 0 && window.titleContains(mouseX, mouseY)) {
+        if (button == GLFW.GLFW_MOUSE_BUTTON_LEFT && window.titleContains(mouseX, mouseY)) {
             dragging = window;
             dragOffsetX = (int) mouseX - window.x();
             dragOffsetY = (int) mouseY - window.y();
             return true;
         }
         int slot = window.slotAt(mouseX, mouseY);
-        if (slot >= 0 && (button == 0 || button == 1)) {
+        if (slot >= 0 && (button == GLFW.GLFW_MOUSE_BUTTON_LEFT || button == GLFW.GLFW_MOUSE_BUTTON_RIGHT)) {
             window.clickSlot(slot, button, shiftDown);
         }
         return true;
     }
 
     public boolean mouseDragged(double mouseX, double mouseY, int button, int screenWidth, int screenHeight) {
-        if (dragging == null || button != 0) {
+        if (button != GLFW.GLFW_MOUSE_BUTTON_LEFT) {
+            return topAt(mouseX, mouseY) != null || topResizeAt(mouseX, mouseY) != null;
+        }
+        if (resizing != null) {
+            resizing.window().resizeFrom(
+                    resizing.edge(),
+                    resizing.originalX(),
+                    resizing.originalY(),
+                    resizing.originalColumns(),
+                    resizing.originalRows(),
+                    mouseX - resizing.startMouseX(),
+                    mouseY - resizing.startMouseY(),
+                    screenWidth,
+                    screenHeight);
+            return true;
+        }
+        if (dragging == null) {
             return topAt(mouseX, mouseY) != null;
         }
         dragging.moveTo((int) mouseX - dragOffsetX, (int) mouseY - dragOffsetY);
@@ -125,27 +185,33 @@ public final class BackpackWindowManager {
     }
 
     public boolean mouseReleased(double mouseX, double mouseY, int button) {
-        if (dragging != null && button == 0) {
+        if (resizing != null && button == GLFW.GLFW_MOUSE_BUTTON_LEFT) {
+            BackpackWindow finished = resizing.window();
+            resizing = null;
+            state.save(finished);
+            return true;
+        }
+        if (dragging != null && button == GLFW.GLFW_MOUSE_BUTTON_LEFT) {
             BackpackWindow finished = dragging;
             dragging = null;
             state.save(finished);
             return true;
         }
-        return topAt(mouseX, mouseY) != null;
+        return topAt(mouseX, mouseY) != null || topResizeAt(mouseX, mouseY) != null;
     }
 
-    public boolean mouseScrolled(double mouseX, double mouseY, double delta) {
+    public boolean mouseScrolled(double mouseX, double mouseY, double delta, boolean horizontal) {
         BackpackWindow window = topAt(mouseX, mouseY);
         if (window == null) {
             return false;
         }
-        window.scroll(delta);
+        window.scroll(delta, horizontal);
         state.save(window);
         return true;
     }
 
     public boolean blocksPoint(double mouseX, double mouseY) {
-        return topAt(mouseX, mouseY) != null;
+        return topAt(mouseX, mouseY) != null || topResizeAt(mouseX, mouseY) != null;
     }
 
     public Collection<Rect2i> exclusionAreas() {
@@ -160,6 +226,10 @@ public final class BackpackWindowManager {
         return areas;
     }
 
+    public void resetCursor() {
+        setCursor(0L);
+    }
+
     private void bringToFront(BackpackWindow window) {
         window.setZIndex(nextZ++);
         state.save(window);
@@ -172,6 +242,14 @@ public final class BackpackWindowManager {
                 .orElse(null);
     }
 
+    private ResizeTarget topResizeAt(double x, double y) {
+        return openWindows().stream()
+                .map(window -> new ResizeTarget(window, window.resizeEdgeAt(x, y)))
+                .filter(target -> target.edge() != BackpackWindow.ResizeEdge.NONE)
+                .max(Comparator.comparingInt(target -> target.window().zIndex()))
+                .orElse(null);
+    }
+
     private List<BackpackWindow> openWindows() {
         List<BackpackWindow> result = new ArrayList<>();
         for (BackpackWindow window : windows.values()) {
@@ -180,6 +258,43 @@ public final class BackpackWindowManager {
             }
         }
         return result;
+    }
+
+    private void updateCursor(double mouseX, double mouseY) {
+        BackpackWindow.ResizeEdge edge = resizing == null
+                ? (topResizeAt(mouseX, mouseY) == null ? BackpackWindow.ResizeEdge.NONE : topResizeAt(mouseX, mouseY).edge())
+                : resizing.edge();
+        setCursor(cursorFor(edge));
+    }
+
+    private long cursorFor(BackpackWindow.ResizeEdge edge) {
+        if (edge == BackpackWindow.ResizeEdge.NONE) {
+            return 0L;
+        }
+        if (resizeEwCursor == 0L) {
+            resizeEwCursor = GLFW.glfwCreateStandardCursor(GLFW.GLFW_RESIZE_EW_CURSOR);
+            resizeNsCursor = GLFW.glfwCreateStandardCursor(GLFW.GLFW_RESIZE_NS_CURSOR);
+            resizeNwseCursor = GLFW.glfwCreateStandardCursor(GLFW.GLFW_RESIZE_NWSE_CURSOR);
+            resizeNeswCursor = GLFW.glfwCreateStandardCursor(GLFW.GLFW_RESIZE_NESW_CURSOR);
+        }
+        if (edge == BackpackWindow.ResizeEdge.LEFT || edge == BackpackWindow.ResizeEdge.RIGHT) {
+            return resizeEwCursor;
+        }
+        if (edge == BackpackWindow.ResizeEdge.TOP || edge == BackpackWindow.ResizeEdge.BOTTOM) {
+            return resizeNsCursor;
+        }
+        if (edge == BackpackWindow.ResizeEdge.TOP_LEFT || edge == BackpackWindow.ResizeEdge.BOTTOM_RIGHT) {
+            return resizeNwseCursor;
+        }
+        return resizeNeswCursor;
+    }
+
+    private void setCursor(long cursor) {
+        if (activeCursor == cursor) {
+            return;
+        }
+        activeCursor = cursor;
+        GLFW.glfwSetCursor(Minecraft.getInstance().getWindow().getWindow(), cursor);
     }
 
     private void requestPersistedWindows(AbstractContainerScreen<?> screen) {
@@ -204,5 +319,19 @@ public final class BackpackWindowManager {
                 return;
             }
         }
+    }
+
+    private record ResizeTarget(BackpackWindow window, BackpackWindow.ResizeEdge edge) {
+    }
+
+    private record ResizeSession(
+            BackpackWindow window,
+            BackpackWindow.ResizeEdge edge,
+            double startMouseX,
+            double startMouseY,
+            int originalX,
+            int originalY,
+            int originalColumns,
+            int originalRows) {
     }
 }
