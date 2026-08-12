@@ -34,7 +34,15 @@ final class BackpackWindowStateStore {
     }
 
     int scroll(String id) {
-        return readInt(key(id, "scroll"), 0);
+        return readInt(key(id, "scrollSlot"), readInt(key(id, "scroll"), 0));
+    }
+
+    int columns(String id, int fallback) {
+        return readInt(key(id, "columns"), fallback);
+    }
+
+    int rows(String id, int fallback) {
+        return readInt(key(id, "rows"), fallback);
     }
 
     void save(BackpackWindow window) {
@@ -43,7 +51,9 @@ final class BackpackWindowStateStore {
         values.setProperty(key(id, "x"), Integer.toString(window.x()));
         values.setProperty(key(id, "y"), Integer.toString(window.y()));
         values.setProperty(key(id, "z"), Integer.toString(window.zIndex()));
-        values.setProperty(key(id, "scroll"), Integer.toString(window.scrollRow()));
+        values.setProperty(key(id, "scrollSlot"), Integer.toString(window.scrollSlot()));
+        values.setProperty(key(id, "columns"), Integer.toString(window.visibleColumns()));
+        values.setProperty(key(id, "rows"), Integer.toString(window.visibleRows()));
         flush();
     }
 
