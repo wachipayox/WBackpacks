@@ -62,6 +62,18 @@ final class BackpackWindowStateStore {
         return legacySlot / Math.max(1, layoutColumns);
     }
 
+    BackpackWindow.FlowAxis flow(String id, BackpackWindow.FlowAxis fallback) {
+        String value = values.getProperty(key(id, "flow"));
+        if (value == null) {
+            return fallback;
+        }
+        try {
+            return BackpackWindow.FlowAxis.valueOf(value);
+        } catch (IllegalArgumentException ignored) {
+            return fallback;
+        }
+    }
+
     void save(BackpackWindow window) {
         String id = window.id();
         values.setProperty(key(id, "open"), Boolean.toString(window.isOpen()));
@@ -74,6 +86,7 @@ final class BackpackWindowStateStore {
         values.setProperty(key(id, "layoutColumns"), Integer.toString(window.layoutColumns()));
         values.setProperty(key(id, "scrollColumn"), Integer.toString(window.scrollColumn()));
         values.setProperty(key(id, "scrollRow"), Integer.toString(window.scrollRow()));
+        values.setProperty(key(id, "flow"), window.flowAxis().name());
         flush();
     }
 
