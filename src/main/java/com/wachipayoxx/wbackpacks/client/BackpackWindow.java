@@ -16,7 +16,7 @@ final class BackpackWindow {
     private static final int PADDING = 5;
     private static final int TITLE_BUTTON_WIDTH = 9;
     private static final int MIN_WINDOW_WIDTH = TITLE_BUTTON_WIDTH * 3;
-    private static final int ACTIVE_TITLE_COLOR = 0xF02E2E2E;
+    private static final int ACTIVE_TITLE_COLOR = 0xF0202020;
     private static final int INACTIVE_TITLE_COLOR = 0xF03A3A3A;
 
     enum ResizeEdge {
@@ -412,8 +412,8 @@ final class BackpackWindow {
     }
 
     private void renderInteractionModeIcon(GuiGraphics graphics, int buttonX, int titleY, boolean chestMode) {
-        int cx = buttonX + 4;
-        int cy = titleY + 8;
+        int cx = buttonX + TITLE_BUTTON_WIDTH / 2;
+        int cy = titleY + TITLE_HEIGHT / 2;
         if (chestMode) {
             graphics.fill(cx - 3, cy - 3, cx + 4, cy - 1, 0xFFE6E6E6);
             graphics.fill(cx - 3, cy, cx + 4, cy + 4, 0xFFE6E6E6);
