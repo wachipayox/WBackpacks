@@ -11,7 +11,12 @@ import net.minecraft.world.item.ItemStack;
 import net.neoforged.neoforge.items.IItemHandler;
 import net.neoforged.neoforge.network.handling.IPayloadContext;
 
-public record BackpackSlotClickPayload(String backpackId, int slot, int button, boolean quickMove) implements CustomPacketPayload {
+public record BackpackSlotClickPayload(
+        String backpackId,
+        int slot,
+        int button,
+        boolean quickMove,
+        boolean quickMoveToContainer) implements CustomPacketPayload {
     public static final Type<BackpackSlotClickPayload> TYPE = new Type<>(
             ResourceLocation.fromNamespaceAndPath(WBackpacks.MOD_ID, "slot_click"));
     public static final StreamCodec<RegistryFriendlyByteBuf, BackpackSlotClickPayload> STREAM_CODEC = StreamCodec.of(
@@ -20,8 +25,14 @@ public record BackpackSlotClickPayload(String backpackId, int slot, int button, 
                 buf.writeVarInt(payload.slot);
                 buf.writeByte(payload.button);
                 buf.writeBoolean(payload.quickMove);
+                buf.writeBoolean(payload.quickMoveToContainer);
             },
-            buf -> new BackpackSlotClickPayload(buf.readUtf(), buf.readVarInt(), buf.readByte(), buf.readBoolean()));
+            buf -> new BackpackSlotClickPayload(
+                    buf.readUtf(),
+                    buf.readVarInt(),
+                    buf.readByte(),
+                    buf.readBoolean(),
+                    buf.readBoolean()));
 
     @Override
     public Type<? extends CustomPacketPayload> type() {
@@ -47,7 +58,11 @@ public record BackpackSlotClickPayload(String backpackId, int slot, int button, 
         }
 
         if (payload.quickMove) {
-            quickMoveToPlayer(player, handler, payload.slot);
+            if (payload.quickMoveToContainer && player.containerMenu != player.inventoryMenu) {
+                quickMoveToContainer(player, handler, payload.slot);
+            } else {
+                quickMoveToPlayer(player, handler, payload.slot);
+            }
         } else {
             clickWithCarried(player, handler, payload.slot, payload.button);
         }
@@ -63,6 +78,18 @@ public record BackpackSlotClickPayload(String backpackId, int slot, int button, 
         }
         ItemStack remainder = simulated.copy();
         player.getInventory().add(remainder);
+        int moved = simulated.getCount() - remainder.getCount();
+        if (moved > 0) {
+            handler.extractItem(slot, moved, false);
+        }
+    }
+
+    private static void quickMoveToContainer(ServerPlayer player, IItemHandler handler, int slot) {
+        ItemStack simulated = handler.extractItem(slot, Integer.MAX_VALUE, true);
+        if (simulated.isEmpty()) {
+            return;
+        }
+        ItemStack remainder = BackpackTransferHelper.insertIntoExternalContainer(player, simulated);
         int moved = simulated.getCount() - remainder.getCount();
         if (moved > 0) {
             handler.extractItem(slot, moved, false);
