@@ -104,10 +104,17 @@ public final class BackpackWindowManager {
         List<BackpackWindow> ordered = openWindows();
         ordered.sort(Comparator.comparingInt(BackpackWindow::zIndex));
         for (BackpackWindow window : ordered) {
-            window.render(graphics, mouseX, mouseY, isActive(window), containerAvailable);
-            // Item rendering uses its own buffers. Flush each complete window before the next one
-            // so items from a lower window can never be submitted after an upper window's body.
-            graphics.flush();
+            window.clampToScreen(screen.width, screen.height);
+        }
+
+        for (int index = 0; index < ordered.size(); index++) {
+            BackpackWindow window = ordered.get(index);
+            for (RenderRect region : visibleRegions(ordered, index)) {
+                graphics.enableScissor(region.left(), region.top(), region.right(), region.bottom());
+                window.render(graphics, mouseX, mouseY, isActive(window), containerAvailable);
+                graphics.flush();
+                graphics.disableScissor();
+            }
         }
 
         BackpackWindow hovered = topAt(mouseX, mouseY);
@@ -251,6 +258,10 @@ public final class BackpackWindowManager {
             return false;
         }
 
+        if (active.backpackStack().isEmpty()) {
+            return false;
+        }
+
         boolean playerSlot = slot.container == minecraft.player.getInventory();
         if (screen instanceof InventoryScreen) {
             if (!playerSlot || BackpackAccess.isBackpack(slot.getItem())) {
@@ -331,12 +342,57 @@ public final class BackpackWindowManager {
             if (edge != BackpackWindow.ResizeEdge.NONE) {
                 return new ResizeTarget(window, edge);
             }
-            // A higher window's body fully occludes every resize handle below it.
             if (window.contains(x, y)) {
                 return null;
             }
         }
         return null;
+    }
+
+    private List<RenderRect> visibleRegions(List<BackpackWindow> ordered, int windowIndex) {
+        BackpackWindow window = ordered.get(windowIndex);
+        List<RenderRect> regions = new ArrayList<>();
+        regions.add(new RenderRect(window.x(), window.y(), window.x() + window.width(), window.y() + window.height()));
+
+        for (int index = windowIndex + 1; index < ordered.size() && !regions.isEmpty(); index++) {
+            BackpackWindow occluder = ordered.get(index);
+            RenderRect covered = new RenderRect(
+                    occluder.x(),
+                    occluder.y(),
+                    occluder.x() + occluder.width(),
+                    occluder.y() + occluder.height());
+            List<RenderRect> remaining = new ArrayList<>();
+            for (RenderRect region : regions) {
+                subtract(region, covered, remaining);
+            }
+            regions = remaining;
+        }
+        return regions;
+    }
+
+    private static void subtract(RenderRect source, RenderRect covered, List<RenderRect> output) {
+        int intersectionLeft = Math.max(source.left(), covered.left());
+        int intersectionTop = Math.max(source.top(), covered.top());
+        int intersectionRight = Math.min(source.right(), covered.right());
+        int intersectionBottom = Math.min(source.bottom(), covered.bottom());
+
+        if (intersectionLeft >= intersectionRight || intersectionTop >= intersectionBottom) {
+            output.add(source);
+            return;
+        }
+
+        if (source.top() < intersectionTop) {
+            output.add(new RenderRect(source.left(), source.top(), source.right(), intersectionTop));
+        }
+        if (intersectionBottom < source.bottom()) {
+            output.add(new RenderRect(source.left(), intersectionBottom, source.right(), source.bottom()));
+        }
+        if (source.left() < intersectionLeft) {
+            output.add(new RenderRect(source.left(), intersectionTop, intersectionLeft, intersectionBottom));
+        }
+        if (intersectionRight < source.right()) {
+            output.add(new RenderRect(intersectionRight, intersectionTop, source.right(), intersectionBottom));
+        }
     }
 
     private List<BackpackWindow> openWindows() {
@@ -413,6 +469,9 @@ public final class BackpackWindowManager {
 
     private static boolean isContainerScreen(AbstractContainerScreen<?> screen) {
         return !(screen instanceof InventoryScreen) && !(screen instanceof CreativeModeInventoryScreen);
+    }
+
+    private record RenderRect(int left, int top, int right, int bottom) {
     }
 
     private record ResizeTarget(BackpackWindow window, BackpackWindow.ResizeEdge edge) {
