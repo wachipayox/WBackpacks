@@ -21,6 +21,10 @@ final class BackpackWindowStateStore {
         return Boolean.parseBoolean(values.getProperty(key(id, "open"), "false"));
     }
 
+    boolean minimized(String id) {
+        return Boolean.parseBoolean(values.getProperty(key(id, "minimized"), "false"));
+    }
+
     int x(String id, int fallback) {
         return readInt(key(id, "x"), fallback);
     }
@@ -33,8 +37,8 @@ final class BackpackWindowStateStore {
         return readInt(key(id, "z"), fallback);
     }
 
-    int scroll(String id) {
-        return readInt(key(id, "scrollSlot"), readInt(key(id, "scroll"), 0));
+    int layoutColumns(String id, int fallback) {
+        return readInt(key(id, "layoutColumns"), readInt(key(id, "columns"), fallback));
     }
 
     int columns(String id, int fallback) {
@@ -45,21 +49,48 @@ final class BackpackWindowStateStore {
         return readInt(key(id, "rows"), fallback);
     }
 
+    int scrollRow(String id, int legacyColumns) {
+        String modern = values.getProperty(key(id, "scrollRow"));
+        if (modern != null) {
+            return parseInt(modern, 0);
+        }
+
+        // Migrate the previous single linear scroll position as vertical scroll only.
+        int legacy = readInt(key(id, "scrollSlot"), readInt(key(id, "scroll"), 0));
+        return legacy / Math.max(1, legacyColumns);
+    }
+
+    int scrollColumn(String id) {
+        // Old versions used the remainder of one linear offset as a fake horizontal scrollbar.
+        // Do not migrate that remainder: horizontal scroll now means real logical columns off-screen.
+        return readInt(key(id, "scrollColumn"), 0);
+    }
+
     void save(BackpackWindow window) {
         String id = window.id();
         values.setProperty(key(id, "open"), Boolean.toString(window.isOpen()));
+        values.setProperty(key(id, "minimized"), Boolean.toString(window.isMinimized()));
         values.setProperty(key(id, "x"), Integer.toString(window.x()));
         values.setProperty(key(id, "y"), Integer.toString(window.y()));
         values.setProperty(key(id, "z"), Integer.toString(window.zIndex()));
-        values.setProperty(key(id, "scrollSlot"), Integer.toString(window.scrollSlot()));
+        values.setProperty(key(id, "layoutColumns"), Integer.toString(window.layoutColumns()));
         values.setProperty(key(id, "columns"), Integer.toString(window.visibleColumns()));
         values.setProperty(key(id, "rows"), Integer.toString(window.visibleRows()));
+        values.setProperty(key(id, "scrollRow"), Integer.toString(window.scrollRow()));
+        values.setProperty(key(id, "scrollColumn"), Integer.toString(window.scrollColumn()));
         flush();
     }
 
     private int readInt(String key, int fallback) {
+        return parseInt(values.getProperty(key), fallback);
+    }
+
+    private static int parseInt(String value, int fallback) {
+        if (value == null) {
+            return fallback;
+        }
         try {
-            return Integer.parseInt(values.getProperty(key, Integer.toString(fallback)));
+            return Integer.parseInt(value);
         } catch (NumberFormatException ignored) {
             return fallback;
         }
