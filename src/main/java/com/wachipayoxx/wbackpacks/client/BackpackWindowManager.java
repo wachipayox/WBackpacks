@@ -2,6 +2,7 @@ package com.wachipayoxx.wbackpacks.client;
 
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.wachipayoxx.wbackpacks.backpack.BackpackAccess;
+import com.wachipayoxx.wbackpacks.network.MenuSlotQuickMovePayload;
 import com.wachipayoxx.wbackpacks.network.RequestOpenBackpackPayload;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -14,6 +15,8 @@ import java.util.Set;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
+import net.minecraft.client.gui.screens.inventory.CreativeModeInventoryScreen;
+import net.minecraft.client.gui.screens.inventory.InventoryScreen;
 import net.minecraft.client.renderer.Rect2i;
 import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.item.ItemStack;
@@ -30,6 +33,7 @@ public final class BackpackWindowManager {
 
     private BackpackWindow dragging;
     private ResizeSession resizing;
+    private String activeBackpackId;
     private int dragOffsetX;
     private int dragOffsetY;
     private int nextZ = 1;
@@ -49,7 +53,7 @@ public final class BackpackWindowManager {
         if (existing != null) {
             existing.setCapacity(capacity);
             existing.setOpen(true);
-            bringToFront(existing);
+            activate(existing);
             restoreRequests.remove(id);
             state.save(existing);
             return;
@@ -80,9 +84,10 @@ public final class BackpackWindowManager {
                 restoredLayoutColumns,
                 restoredVisibleColumns,
                 restoredVisibleRows,
-                state.minimized(id));
+                state.minimized(id),
+                state.containerMode(id));
         windows.put(id, window);
-        bringToFront(window);
+        activate(window);
         restoreRequests.remove(id);
         state.save(window);
     }
@@ -90,17 +95,19 @@ public final class BackpackWindowManager {
     public void render(AbstractContainerScreen<?> screen, GuiGraphics graphics, int mouseX, int mouseY) {
         requestPersistedWindows(screen);
 
-        // Vanilla inventory entity previews and item rendering use depth. Flush everything that the
-        // underlying screen queued, then draw WBackpacks as a true overlay with depth disabled.
         graphics.flush();
         RenderSystem.disableDepthTest();
         graphics.pose().pushPose();
         graphics.pose().translate(0.0F, 0.0F, 1000.0F);
 
+        boolean containerAvailable = isContainerScreen(screen);
         List<BackpackWindow> ordered = openWindows();
         ordered.sort(Comparator.comparingInt(BackpackWindow::zIndex));
         for (BackpackWindow window : ordered) {
-            window.render(graphics, mouseX, mouseY);
+            window.render(graphics, mouseX, mouseY, isActive(window), containerAvailable);
+            // Item rendering uses its own buffers. Flush each complete window before the next one
+            // so items from a lower window can never be submitted after an upper window's body.
+            graphics.flush();
         }
 
         BackpackWindow hovered = topAt(mouseX, mouseY);
@@ -124,12 +131,14 @@ public final class BackpackWindowManager {
         updateCursor(mouseX, mouseY);
     }
 
-    public boolean mousePressed(double mouseX, double mouseY, int button, boolean shiftDown) {
+    public boolean mousePressed(AbstractContainerScreen<?> screen, double mouseX, double mouseY, int button, boolean shiftDown) {
+        boolean containerAvailable = isContainerScreen(screen);
+
         if (button == GLFW.GLFW_MOUSE_BUTTON_LEFT) {
             ResizeTarget resizeTarget = topResizeAt(mouseX, mouseY);
             if (resizeTarget != null) {
                 BackpackWindow window = resizeTarget.window();
-                bringToFront(window);
+                activate(window);
                 resizing = new ResizeSession(
                         window,
                         resizeTarget.edge(),
@@ -148,10 +157,18 @@ public final class BackpackWindowManager {
         if (window == null) {
             return false;
         }
-        bringToFront(window);
+        activate(window);
 
         if (button == GLFW.GLFW_MOUSE_BUTTON_LEFT && window.closeContains(mouseX, mouseY)) {
             window.setOpen(false);
+            state.save(window);
+            if (isActive(window)) {
+                selectTopActive();
+            }
+            return true;
+        }
+        if (button == GLFW.GLFW_MOUSE_BUTTON_LEFT && window.interactionModeContains(mouseX, mouseY, containerAvailable)) {
+            window.setContainerMode(!window.isContainerMode());
             state.save(window);
             return true;
         }
@@ -169,7 +186,7 @@ public final class BackpackWindowManager {
 
         int slot = window.slotAt(mouseX, mouseY);
         if (slot >= 0 && (button == GLFW.GLFW_MOUSE_BUTTON_LEFT || button == GLFW.GLFW_MOUSE_BUTTON_RIGHT)) {
-            window.clickSlot(slot, button, shiftDown);
+            window.clickSlot(slot, button, shiftDown, containerAvailable);
         }
         return true;
     }
@@ -221,8 +238,35 @@ public final class BackpackWindowManager {
         if (window == null) {
             return false;
         }
+        activate(window);
         window.scroll(delta, horizontal);
         state.save(window);
+        return true;
+    }
+
+    public boolean tryQuickMoveFromMenu(AbstractContainerScreen<?> screen, Slot slot, int menuSlot) {
+        Minecraft minecraft = Minecraft.getInstance();
+        BackpackWindow active = activeWindow();
+        if (minecraft.player == null || active == null || slot == null || !slot.hasItem()) {
+            return false;
+        }
+
+        boolean playerSlot = slot.container == minecraft.player.getInventory();
+        if (screen instanceof InventoryScreen) {
+            if (!playerSlot || BackpackAccess.isBackpack(slot.getItem())) {
+                return false;
+            }
+            activate(active);
+            PacketDistributor.sendToServer(new MenuSlotQuickMovePayload(active.id(), menuSlot));
+            return true;
+        }
+
+        if (!isContainerScreen(screen) || playerSlot || !active.isContainerMode()) {
+            return false;
+        }
+
+        activate(active);
+        PacketDistributor.sendToServer(new MenuSlotQuickMovePayload(active.id(), menuSlot));
         return true;
     }
 
@@ -246,9 +290,30 @@ public final class BackpackWindowManager {
         setCursor(0L);
     }
 
-    private void bringToFront(BackpackWindow window) {
+    private void activate(BackpackWindow window) {
+        activeBackpackId = window.id();
         window.setZIndex(nextZ++);
         state.save(window);
+    }
+
+    private boolean isActive(BackpackWindow window) {
+        return window != null && window.id().equals(activeBackpackId);
+    }
+
+    private BackpackWindow activeWindow() {
+        BackpackWindow active = activeBackpackId == null ? null : windows.get(activeBackpackId);
+        if (active != null && active.isOpen()) {
+            return active;
+        }
+        selectTopActive();
+        return activeBackpackId == null ? null : windows.get(activeBackpackId);
+    }
+
+    private void selectTopActive() {
+        BackpackWindow top = openWindows().stream()
+                .max(Comparator.comparingInt(BackpackWindow::zIndex))
+                .orElse(null);
+        activeBackpackId = top == null ? null : top.id();
     }
 
     private BackpackWindow topAt(double x, double y) {
@@ -259,11 +324,19 @@ public final class BackpackWindowManager {
     }
 
     private ResizeTarget topResizeAt(double x, double y) {
-        return openWindows().stream()
-                .map(window -> new ResizeTarget(window, window.resizeEdgeAt(x, y)))
-                .filter(target -> target.edge() != BackpackWindow.ResizeEdge.NONE)
-                .max(Comparator.comparingInt(target -> target.window().zIndex()))
-                .orElse(null);
+        List<BackpackWindow> ordered = openWindows();
+        ordered.sort(Comparator.comparingInt(BackpackWindow::zIndex).reversed());
+        for (BackpackWindow window : ordered) {
+            BackpackWindow.ResizeEdge edge = window.resizeEdgeAt(x, y);
+            if (edge != BackpackWindow.ResizeEdge.NONE) {
+                return new ResizeTarget(window, edge);
+            }
+            // A higher window's body fully occludes every resize handle below it.
+            if (window.contains(x, y)) {
+                return null;
+            }
+        }
+        return null;
     }
 
     private List<BackpackWindow> openWindows() {
@@ -336,6 +409,10 @@ public final class BackpackWindowManager {
                 return;
             }
         }
+    }
+
+    private static boolean isContainerScreen(AbstractContainerScreen<?> screen) {
+        return !(screen instanceof InventoryScreen) && !(screen instanceof CreativeModeInventoryScreen);
     }
 
     private record ResizeTarget(BackpackWindow window, BackpackWindow.ResizeEdge edge) {
