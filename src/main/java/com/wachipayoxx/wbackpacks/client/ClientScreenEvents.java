@@ -20,6 +20,8 @@ public final class ClientScreenEvents {
     public static void renderOnTop(ScreenEvent.Render.Post event) {
         if (event.getScreen() instanceof AbstractContainerScreen<?> screen) {
             BackpackWindowManager.get().render(screen, event.getGuiGraphics(), event.getMouseX(), event.getMouseY());
+        } else {
+            BackpackWindowManager.get().resetCursor();
         }
     }
 
@@ -69,7 +71,7 @@ public final class ClientScreenEvents {
     @SubscribeEvent(priority = EventPriority.HIGHEST)
     public static void mouseScrolled(ScreenEvent.MouseScrolled.Pre event) {
         if (event.getScreen() instanceof AbstractContainerScreen<?>
-                && BackpackWindowManager.get().mouseScrolled(event.getMouseX(), event.getMouseY(), event.getScrollDeltaY())) {
+                && BackpackWindowManager.get().mouseScrolled(event.getMouseX(), event.getMouseY(), event.getScrollDeltaY(), Screen.hasShiftDown())) {
             event.setCanceled(true);
         }
     }
