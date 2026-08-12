@@ -14,8 +14,8 @@ final class BackpackWindow {
     static final int RESIZE_MARGIN = 4;
     private static final int SLOT_SIZE = 18;
     private static final int PADDING = 5;
-    private static final int TITLE_BUTTON_WIDTH = 16;
-    private static final int MIN_WINDOW_WIDTH = TITLE_BUTTON_WIDTH * 2 + 4;
+    private static final int TITLE_BUTTON_WIDTH = 14;
+    private static final int MIN_WINDOW_WIDTH = TITLE_BUTTON_WIDTH * 2;
 
     enum ResizeEdge {
         NONE(false, false, false, false),
@@ -202,21 +202,43 @@ final class BackpackWindow {
             return;
         }
 
+        boolean widthExpanded = horizontalChanged && requestedColumns > originalVisibleColumns;
+        boolean heightExpanded = verticalChanged && requestedRows > originalVisibleRows;
+        boolean verticalFlow = originalLayoutColumns == originalVisibleColumns;
+        boolean horizontalFlow = originalLayoutColumns > originalVisibleColumns
+                && rowsForColumns(capacity, originalLayoutColumns) <= originalVisibleRows;
+
         int oldWidth = widthForColumns(originalVisibleColumns);
         int oldHeight = heightForRows(originalVisibleRows);
 
         if (horizontalChanged && !verticalChanged) {
-            // Width is authoritative: reflow into exactly this many logical columns.
-            // Any hidden content is therefore genuinely below the viewport.
-            layoutColumns = requestedColumns;
-            visibleColumns = requestedColumns;
-            visibleRows = Math.min(originalVisibleRows, totalRows());
+            if (widthExpanded && horizontalFlow) {
+                // A short/wide layout that is being expanded sideways should stay short/wide.
+                // Reveal more of the columns that already exist instead of turning them back into rows.
+                layoutColumns = originalLayoutColumns;
+                visibleColumns = Math.min(requestedColumns, layoutColumns);
+                visibleRows = Math.min(originalVisibleRows, totalRows());
+            } else {
+                // Width is authoritative: reflow into exactly this many logical columns.
+                // Any hidden content is therefore genuinely below the viewport.
+                layoutColumns = requestedColumns;
+                visibleColumns = requestedColumns;
+                visibleRows = Math.min(originalVisibleRows, totalRows());
+            }
         } else if (verticalChanged && !horizontalChanged) {
-            // Height is authoritative: reflow into enough logical columns to keep the requested rows.
-            // If those logical columns exceed the current viewport width, that is genuine horizontal overflow.
-            layoutColumns = columnsForRows(capacity, requestedRows);
-            visibleRows = Math.min(requestedRows, totalRows());
-            visibleColumns = Math.min(originalVisibleColumns, layoutColumns);
+            if (heightExpanded && verticalFlow) {
+                // A narrow/tall layout that is being expanded downward should stay narrow/tall.
+                // Reveal more existing rows instead of reinterpreting them as off-screen columns.
+                layoutColumns = originalLayoutColumns;
+                visibleColumns = Math.min(originalVisibleColumns, layoutColumns);
+                visibleRows = Math.min(requestedRows, totalRows());
+            } else {
+                // Height is authoritative: reflow into enough logical columns to keep the requested rows.
+                // If those logical columns exceed the current viewport width, that is genuine horizontal overflow.
+                layoutColumns = columnsForRows(capacity, requestedRows);
+                visibleRows = Math.min(requestedRows, totalRows());
+                visibleColumns = Math.min(originalVisibleColumns, layoutColumns);
+            }
         } else if ((long) requestedColumns * requestedRows >= capacity) {
             // The requested rectangle can contain everything, so hug the real content and avoid dead space.
             layoutColumns = requestedColumns;
