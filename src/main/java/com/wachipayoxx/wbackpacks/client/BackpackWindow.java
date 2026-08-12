@@ -16,6 +16,11 @@ final class BackpackWindow {
     private static final int PADDING = 5;
     private static final int TITLE_BUTTON_WIDTH = 14;
 
+    enum FlowAxis {
+        VERTICAL,
+        HORIZONTAL
+    }
+
     enum ResizeEdge {
         NONE(false, false, false, false),
         LEFT(true, false, false, false),
@@ -58,6 +63,7 @@ final class BackpackWindow {
     private int layoutColumns;
     private int scrollColumn;
     private int scrollRow;
+    private FlowAxis flowAxis;
     private boolean open = true;
     private boolean minimized;
 
@@ -72,6 +78,7 @@ final class BackpackWindow {
             int layoutColumns,
             int scrollColumn,
             int scrollRow,
+            FlowAxis flowAxis,
             boolean minimized) {
         this.id = id;
         this.capacity = clampCapacity(capacity);
@@ -83,6 +90,7 @@ final class BackpackWindow {
         this.layoutColumns = layoutColumns <= 0 ? this.visibleColumns : layoutColumns;
         this.scrollColumn = Math.max(0, scrollColumn);
         this.scrollRow = Math.max(0, scrollRow);
+        this.flowAxis = flowAxis == null ? FlowAxis.VERTICAL : flowAxis;
         this.minimized = minimized;
         clampLayout();
     }
@@ -96,11 +104,13 @@ final class BackpackWindow {
     int layoutColumns() { return layoutColumns; }
     int scrollColumn() { return scrollColumn; }
     int scrollRow() { return scrollRow; }
+    FlowAxis flowAxis() { return flowAxis; }
     boolean isOpen() { return open; }
     boolean isMinimized() { return minimized; }
 
     void setCapacity(int capacity) {
         this.capacity = clampCapacity(capacity);
+        reflowForCurrentViewport();
         clampLayout();
     }
 
@@ -169,6 +179,7 @@ final class BackpackWindow {
             int originalColumns,
             int originalRows,
             int originalLayoutColumns,
+            FlowAxis originalFlowAxis,
             double deltaX,
             double deltaY,
             int screenWidth,
@@ -194,22 +205,29 @@ final class BackpackWindow {
         }
         rows = Math.max(1, Math.min(maxRows, rows));
 
-        int newLayoutColumns = originalLayoutColumns;
-        if (edge.horizontal()) {
-            // Width is the preferred dimension: reflow content downward.
-            newLayoutColumns = columns;
-        } else if (edge.vertical()) {
-            // Height is the preferred dimension: reflow content to the right.
-            newLayoutColumns = Math.max(1, Math.min(capacity, ceilDiv(capacity, rows)));
+        int columnsRemoved = Math.max(0, originalColumns - columns);
+        int rowsRemoved = Math.max(0, originalRows - rows);
+        FlowAxis newFlowAxis = originalFlowAxis;
+        if (columnsRemoved > 0 || rowsRemoved > 0) {
+            if (columnsRemoved >= rowsRemoved && columnsRemoved > 0) {
+                newFlowAxis = FlowAxis.VERTICAL;
+            } else {
+                newFlowAxis = FlowAxis.HORIZONTAL;
+            }
         }
+
+        int newLayoutColumns = newFlowAxis == FlowAxis.VERTICAL
+                ? columns
+                : Math.max(1, Math.min(capacity, ceilDiv(capacity, rows)));
 
         int oldWidth = widthForColumns(originalColumns);
         int oldHeight = heightForRows(originalRows);
-        boolean layoutChanged = newLayoutColumns != layoutColumns;
+        boolean layoutChanged = newLayoutColumns != layoutColumns || newFlowAxis != flowAxis;
 
         visibleColumns = columns;
         visibleRows = rows;
         layoutColumns = newLayoutColumns;
+        flowAxis = newFlowAxis;
         clampLayout();
         if (layoutChanged) {
             scrollColumn = 0;
@@ -393,6 +411,12 @@ final class BackpackWindow {
             graphics.fill(gridX, bottom - 3, gridX + trackWidth, bottom - 1, 0xFF555555);
             graphics.fill(thumbX, bottom - 3, thumbX + thumbWidth, bottom - 1, 0xFFE0E0E0);
         }
+    }
+
+    private void reflowForCurrentViewport() {
+        layoutColumns = flowAxis == FlowAxis.VERTICAL
+                ? Math.max(1, Math.min(capacity, visibleColumns))
+                : Math.max(1, Math.min(capacity, ceilDiv(capacity, Math.max(1, visibleRows))));
     }
 
     private int maxScrollColumn() {
