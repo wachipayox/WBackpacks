@@ -67,6 +67,9 @@ public final class BackpackWindowManager {
         int defaultRows = Math.min(6, (Math.max(1, capacity) + defaultColumns - 1) / defaultColumns);
         int savedColumns = state.columns(id, defaultColumns);
         int savedLayoutColumns = state.layoutColumns(id, savedColumns);
+        BackpackWindow.FlowAxis fallbackFlow = savedLayoutColumns > savedColumns
+                ? BackpackWindow.FlowAxis.HORIZONTAL
+                : BackpackWindow.FlowAxis.VERTICAL;
         BackpackWindow window = new BackpackWindow(
                 id,
                 capacity,
@@ -78,6 +81,7 @@ public final class BackpackWindowManager {
                 savedLayoutColumns,
                 state.scrollColumn(id),
                 state.scrollRow(id, savedLayoutColumns),
+                state.flow(id, fallbackFlow),
                 state.minimized(id));
         windows.put(id, window);
         bringToFront(window);
@@ -135,7 +139,8 @@ public final class BackpackWindowManager {
                         window.y(),
                         window.visibleColumns(),
                         window.visibleRows(),
-                        window.layoutColumns());
+                        window.layoutColumns(),
+                        window.flowAxis());
                 return true;
             }
         }
@@ -182,6 +187,7 @@ public final class BackpackWindowManager {
                     resizing.originalColumns(),
                     resizing.originalRows(),
                     resizing.originalLayoutColumns(),
+                    resizing.originalFlowAxis(),
                     mouseX - resizing.startMouseX(),
                     mouseY - resizing.startMouseY(),
                     screenWidth,
@@ -346,6 +352,7 @@ public final class BackpackWindowManager {
             int originalY,
             int originalColumns,
             int originalRows,
-            int originalLayoutColumns) {
+            int originalLayoutColumns,
+            BackpackWindow.FlowAxis originalFlowAxis) {
     }
 }
