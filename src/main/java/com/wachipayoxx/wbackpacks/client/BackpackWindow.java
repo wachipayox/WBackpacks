@@ -14,8 +14,8 @@ final class BackpackWindow {
     static final int RESIZE_MARGIN = 4;
     private static final int SLOT_SIZE = 18;
     private static final int PADDING = 5;
-    private static final int MIN_WINDOW_WIDTH = 72;
-    private static final int MAX_COLUMNS = 9;
+    private static final int TITLE_BUTTON_WIDTH = 16;
+    private static final int MIN_WINDOW_WIDTH = TITLE_BUTTON_WIDTH * 2 + 4;
 
     enum ResizeEdge {
         NONE(false, false, false, false),
@@ -54,20 +54,42 @@ final class BackpackWindow {
     private int x;
     private int y;
     private int zIndex;
-    private int visibleColumns;
-    private int visibleRows;
-    private int scrollSlot;
-    private boolean open = true;
 
-    BackpackWindow(String id, int capacity, int x, int y, int zIndex, int scrollSlot, int visibleColumns, int visibleRows) {
+    /** Number of columns in the logical slot grid. Can be wider than the viewport. */
+    private int layoutColumns;
+    /** Number of columns currently visible in the window. */
+    private int visibleColumns;
+    /** Number of rows currently visible in the window. */
+    private int visibleRows;
+    private int scrollRow;
+    private int scrollColumn;
+
+    private boolean open = true;
+    private boolean minimized;
+
+    BackpackWindow(
+            String id,
+            int capacity,
+            int x,
+            int y,
+            int zIndex,
+            int scrollRow,
+            int scrollColumn,
+            int layoutColumns,
+            int visibleColumns,
+            int visibleRows,
+            boolean minimized) {
         this.id = id;
         this.capacity = clampCapacity(capacity);
         this.x = x;
         this.y = y;
         this.zIndex = zIndex;
-        this.visibleColumns = clampColumns(visibleColumns <= 0 ? Math.min(MAX_COLUMNS, this.capacity) : visibleColumns);
+        this.layoutColumns = clampColumns(layoutColumns <= 0 ? Math.min(9, this.capacity) : layoutColumns);
+        this.visibleColumns = visibleColumns <= 0 ? this.layoutColumns : visibleColumns;
         this.visibleRows = visibleRows <= 0 ? Math.min(6, totalRows()) : visibleRows;
-        this.scrollSlot = Math.max(0, scrollSlot);
+        this.scrollRow = Math.max(0, scrollRow);
+        this.scrollColumn = Math.max(0, scrollColumn);
+        this.minimized = minimized;
         clampLayout();
     }
 
@@ -75,10 +97,13 @@ final class BackpackWindow {
     int x() { return x; }
     int y() { return y; }
     int zIndex() { return zIndex; }
-    int scrollSlot() { return scrollSlot; }
+    int layoutColumns() { return layoutColumns; }
     int visibleColumns() { return visibleColumns; }
     int visibleRows() { return visibleRows; }
+    int scrollRow() { return scrollRow; }
+    int scrollColumn() { return scrollColumn; }
     boolean isOpen() { return open; }
+    boolean isMinimized() { return minimized; }
 
     void setCapacity(int capacity) {
         this.capacity = clampCapacity(capacity);
@@ -87,26 +112,19 @@ final class BackpackWindow {
 
     void setOpen(boolean open) { this.open = open; }
     void setZIndex(int zIndex) { this.zIndex = zIndex; }
+    void setMinimized(boolean minimized) { this.minimized = minimized; }
     void moveTo(int x, int y) { this.x = x; this.y = y; }
 
     int totalRows() {
-        return (capacity + visibleColumns - 1) / visibleColumns;
+        return rowsForColumns(capacity, layoutColumns);
     }
 
     int width() {
-        return Math.max(MIN_WINDOW_WIDTH, PADDING * 2 + visibleColumns * SLOT_SIZE);
+        return widthForColumns(visibleColumns);
     }
 
     int height() {
-        return TITLE_HEIGHT + PADDING * 2 + visibleRows * SLOT_SIZE;
-    }
-
-    int maxVisibleColumns() {
-        return Math.min(MAX_COLUMNS, capacity);
-    }
-
-    int maxVisibleRows() {
-        return totalRows();
+        return minimized ? TITLE_HEIGHT : heightForRows(visibleRows);
     }
 
     boolean contains(double mouseX, double mouseY) {
@@ -118,11 +136,17 @@ final class BackpackWindow {
     }
 
     boolean closeContains(double mouseX, double mouseY) {
-        return titleContains(mouseX, mouseY) && mouseX >= x + width() - TITLE_HEIGHT;
+        return titleContains(mouseX, mouseY) && mouseX >= x + width() - TITLE_BUTTON_WIDTH;
+    }
+
+    boolean minimizeContains(double mouseX, double mouseY) {
+        return titleContains(mouseX, mouseY)
+                && mouseX >= x + width() - TITLE_BUTTON_WIDTH * 2
+                && mouseX < x + width() - TITLE_BUTTON_WIDTH;
     }
 
     ResizeEdge resizeEdgeAt(double mouseX, double mouseY) {
-        if (!open) {
+        if (!open || minimized) {
             return ResizeEdge.NONE;
         }
         boolean nearLeft = mouseX >= x - RESIZE_MARGIN && mouseX <= x + RESIZE_MARGIN;
@@ -143,49 +167,80 @@ final class BackpackWindow {
         return ResizeEdge.NONE;
     }
 
-    void resizeFrom(ResizeEdge edge, int originalX, int originalY, int originalColumns, int originalRows,
-                    double deltaX, double deltaY, int screenWidth, int screenHeight) {
-        int columns = originalColumns;
-        int rows = originalRows;
+    void resizeFrom(
+            ResizeEdge edge,
+            int originalX,
+            int originalY,
+            int originalLayoutColumns,
+            int originalVisibleColumns,
+            int originalVisibleRows,
+            double deltaX,
+            double deltaY,
+            int screenWidth,
+            int screenHeight) {
+        int requestedColumns = originalVisibleColumns;
+        int requestedRows = originalVisibleRows;
 
         if (edge.right) {
-            columns = originalColumns + roundedSlots(deltaX);
+            requestedColumns = originalVisibleColumns + roundedSlots(deltaX);
         } else if (edge.left) {
-            columns = originalColumns - roundedSlots(deltaX);
+            requestedColumns = originalVisibleColumns - roundedSlots(deltaX);
         }
-        columns = Math.max(1, Math.min(Math.min(MAX_COLUMNS, capacity), columns));
-
-        int rowsForColumns = (capacity + columns - 1) / columns;
-        if (edge.bottom) {
-            rows = originalRows + roundedSlots(deltaY);
-        } else if (edge.top) {
-            rows = originalRows - roundedSlots(deltaY);
-        }
-        rows = Math.max(1, Math.min(rowsForColumns, rows));
+        requestedColumns = Math.max(1, Math.min(capacity, requestedColumns));
 
         int maxRowsOnScreen = Math.max(1, (screenHeight - TITLE_HEIGHT - PADDING * 2) / SLOT_SIZE);
-        rows = Math.min(rows, maxRowsOnScreen);
-
-        int oldWidth = widthForColumns(originalColumns);
-        int oldHeight = heightForRows(originalRows);
-        int newWidth = widthForColumns(columns);
-        int newHeight = heightForRows(rows);
-
-        visibleColumns = columns;
-        visibleRows = rows;
-
-        if (edge.left) {
-            x = originalX + oldWidth - newWidth;
-        } else {
-            x = originalX;
+        if (edge.bottom) {
+            requestedRows = originalVisibleRows + roundedSlots(deltaY);
+        } else if (edge.top) {
+            requestedRows = originalVisibleRows - roundedSlots(deltaY);
         }
-        if (edge.top) {
-            y = originalY + oldHeight - newHeight;
+        requestedRows = Math.max(1, Math.min(Math.min(capacity, maxRowsOnScreen), requestedRows));
+
+        boolean horizontalChanged = edge.horizontal() && requestedColumns != originalVisibleColumns;
+        boolean verticalChanged = edge.vertical() && requestedRows != originalVisibleRows;
+        if (!horizontalChanged && !verticalChanged) {
+            return;
+        }
+
+        int oldWidth = widthForColumns(originalVisibleColumns);
+        int oldHeight = heightForRows(originalVisibleRows);
+
+        if (horizontalChanged && !verticalChanged) {
+            // Width is authoritative: reflow into exactly this many logical columns.
+            // Any hidden content is therefore genuinely below the viewport.
+            layoutColumns = requestedColumns;
+            visibleColumns = requestedColumns;
+            visibleRows = Math.min(originalVisibleRows, totalRows());
+        } else if (verticalChanged && !horizontalChanged) {
+            // Height is authoritative: reflow into enough logical columns to keep the requested rows.
+            // If those logical columns exceed the current viewport width, that is genuine horizontal overflow.
+            layoutColumns = columnsForRows(capacity, requestedRows);
+            visibleRows = Math.min(requestedRows, totalRows());
+            visibleColumns = Math.min(originalVisibleColumns, layoutColumns);
+        } else if ((long) requestedColumns * requestedRows >= capacity) {
+            // The requested rectangle can contain everything, so hug the real content and avoid dead space.
+            layoutColumns = requestedColumns;
+            visibleColumns = requestedColumns;
+            visibleRows = Math.min(requestedRows, totalRows());
+        } else if (Math.abs(deltaX) >= Math.abs(deltaY)) {
+            // Corner resize dominated by width: vertical overflow.
+            layoutColumns = requestedColumns;
+            visibleColumns = requestedColumns;
+            visibleRows = Math.min(requestedRows, totalRows());
         } else {
-            y = originalY;
+            // Corner resize dominated by height: horizontal overflow.
+            layoutColumns = columnsForRows(capacity, requestedRows);
+            visibleRows = Math.min(requestedRows, totalRows());
+            visibleColumns = Math.min(requestedColumns, layoutColumns);
         }
 
         clampLayout();
+
+        int newWidth = width();
+        int newHeight = height();
+        x = edge.left ? originalX + oldWidth - newWidth : originalX;
+        y = edge.top ? originalY + oldHeight - newHeight : originalY;
+
         clampToScreen(screenWidth, screenHeight);
     }
 
@@ -199,21 +254,29 @@ final class BackpackWindow {
     }
 
     void scroll(double delta, boolean horizontal) {
-        if (capacity <= visibleSlotCount() || delta == 0) {
-            scrollSlot = 0;
+        if (delta == 0 || minimized) {
             return;
         }
-        int step = horizontal ? 1 : visibleColumns;
-        if (delta > 0) {
-            scrollSlot -= step;
+
+        if (horizontal) {
+            if (!hasHorizontalOverflow()) {
+                return;
+            }
+            scrollColumn += delta > 0 ? -1 : 1;
         } else {
-            scrollSlot += step;
+            if (!hasVerticalOverflow()) {
+                return;
+            }
+            scrollRow += delta > 0 ? -1 : 1;
         }
         clampScroll();
     }
 
     int slotAt(double mouseX, double mouseY) {
-        int gridX = x + PADDING;
+        if (minimized) {
+            return -1;
+        }
+        int gridX = gridX();
         int gridY = y + TITLE_HEIGHT + PADDING;
         if (mouseX < gridX || mouseY < gridY) {
             return -1;
@@ -223,7 +286,13 @@ final class BackpackWindow {
         if (col < 0 || col >= visibleColumns || row < 0 || row >= visibleRows) {
             return -1;
         }
-        int slot = scrollSlot + row * visibleColumns + col;
+
+        int logicalColumn = scrollColumn + col;
+        int logicalRow = scrollRow + row;
+        if (logicalColumn >= layoutColumns || logicalRow >= totalRows()) {
+            return -1;
+        }
+        int slot = logicalRow * layoutColumns + logicalColumn;
         return slot < capacity ? slot : -1;
     }
 
@@ -250,23 +319,42 @@ final class BackpackWindow {
 
         int right = x + width();
         int bottom = y + height();
-        graphics.fill(x, y, right, bottom, 0xE8C6C6C6);
+        graphics.fill(x, y, right, bottom, minimized ? 0xF03A3A3A : 0xE8C6C6C6);
         graphics.fill(x + 1, y + 1, right - 1, y + TITLE_HEIGHT, 0xF03A3A3A);
-        graphics.fill(right - TITLE_HEIGHT, y + 1, right - 1, y + TITLE_HEIGHT, closeContains(mouseX, mouseY) ? 0xFFE05050 : 0xFF555555);
+
+        int minimizeX = right - TITLE_BUTTON_WIDTH * 2;
+        int closeX = right - TITLE_BUTTON_WIDTH;
+        graphics.fill(minimizeX, y + 1, closeX, y + TITLE_HEIGHT,
+                minimizeContains(mouseX, mouseY) ? 0xFF666666 : 0xFF555555);
+        graphics.fill(closeX, y + 1, right - 1, y + TITLE_HEIGHT,
+                closeContains(mouseX, mouseY) ? 0xFFE05050 : 0xFF555555);
 
         ItemStack backpack = backpackStack();
         Component title = backpack.isEmpty() ? Component.translatable("w_backpacks.window.missing") : backpack.getHoverName();
-        graphics.drawString(minecraft.font, title, x + 5, y + 5, 0xFFFFFFFF, false);
-        graphics.drawString(minecraft.font, "×", right - 12, y + 5, 0xFFFFFFFF, false);
+        if (width() >= 82) {
+            graphics.drawString(minecraft.font, title, x + 5, y + 5, 0xFFFFFFFF, false);
+        }
+        graphics.drawString(minecraft.font, minimized ? "+" : "-", minimizeX + 5, y + 5, 0xFFFFFFFF, false);
+        graphics.drawString(minecraft.font, "×", closeX + 4, y + 5, 0xFFFFFFFF, false);
 
-        int gridX = x + PADDING;
+        if (minimized) {
+            return;
+        }
+
+        int gridX = gridX();
         int gridY = y + TITLE_HEIGHT + PADDING;
         for (int row = 0; row < visibleRows; row++) {
             for (int col = 0; col < visibleColumns; col++) {
-                int slot = scrollSlot + row * visibleColumns + col;
+                int logicalColumn = scrollColumn + col;
+                int logicalRow = scrollRow + row;
+                if (logicalColumn >= layoutColumns || logicalRow >= totalRows()) {
+                    continue;
+                }
+                int slot = logicalRow * layoutColumns + logicalColumn;
                 if (slot >= capacity) {
                     continue;
                 }
+
                 int slotX = gridX + col * SLOT_SIZE;
                 int slotY = gridY + row * SLOT_SIZE;
                 graphics.fill(slotX, slotY, slotX + SLOT_SIZE, slotY + SLOT_SIZE, 0xFF8B8B8B);
@@ -286,51 +374,62 @@ final class BackpackWindow {
     }
 
     private void renderScrollIndicators(GuiGraphics graphics, int right, int bottom, int gridX, int gridY) {
-        int maxScroll = maxScrollSlot();
-        if (maxScroll <= 0) {
-            return;
+        if (hasVerticalOverflow()) {
+            int trackHeight = visibleRows * SLOT_SIZE;
+            int thumbHeight = Math.max(8, trackHeight * visibleRows / totalRows());
+            int travel = Math.max(0, trackHeight - thumbHeight);
+            int maxScroll = maxScrollRow();
+            int thumbY = gridY + (maxScroll == 0 ? 0 : travel * scrollRow / maxScroll);
+            graphics.fill(right - 3, gridY, right - 1, gridY + trackHeight, 0xFF555555);
+            graphics.fill(right - 3, thumbY, right - 1, thumbY + thumbHeight, 0xFFE0E0E0);
         }
 
-        int row = scrollSlot / visibleColumns;
-        int maxRow = Math.max(1, (maxScroll + visibleColumns - 1) / visibleColumns);
-        int trackHeight = visibleRows * SLOT_SIZE;
-        int thumbHeight = Math.max(8, trackHeight * visibleSlotCount() / capacity);
-        int travelY = Math.max(0, trackHeight - thumbHeight);
-        int thumbY = gridY + travelY * Math.min(row, maxRow) / maxRow;
-        graphics.fill(right - 3, gridY, right - 1, gridY + trackHeight, 0xFF555555);
-        graphics.fill(right - 3, thumbY, right - 1, thumbY + thumbHeight, 0xFFE0E0E0);
-
-        int columnOffset = scrollSlot % visibleColumns;
-        if (visibleColumns > 1) {
+        if (hasHorizontalOverflow()) {
             int trackWidth = visibleColumns * SLOT_SIZE;
-            int thumbWidth = Math.max(8, trackWidth / visibleColumns);
-            int travelX = Math.max(0, trackWidth - thumbWidth);
-            int thumbX = gridX + travelX * columnOffset / (visibleColumns - 1);
+            int thumbWidth = Math.max(8, trackWidth * visibleColumns / layoutColumns);
+            int travel = Math.max(0, trackWidth - thumbWidth);
+            int maxScroll = maxScrollColumn();
+            int thumbX = gridX + (maxScroll == 0 ? 0 : travel * scrollColumn / maxScroll);
             graphics.fill(gridX, bottom - 3, gridX + trackWidth, bottom - 1, 0xFF555555);
             graphics.fill(thumbX, bottom - 3, thumbX + thumbWidth, bottom - 1, 0xFFE0E0E0);
         }
     }
 
-    private int visibleSlotCount() {
-        return visibleColumns * visibleRows;
+    private boolean hasVerticalOverflow() {
+        return totalRows() > visibleRows;
     }
 
-    private int maxScrollSlot() {
-        return Math.max(0, capacity - visibleSlotCount());
+    private boolean hasHorizontalOverflow() {
+        return layoutColumns > visibleColumns;
+    }
+
+    private int maxScrollRow() {
+        return Math.max(0, totalRows() - visibleRows);
+    }
+
+    private int maxScrollColumn() {
+        return Math.max(0, layoutColumns - visibleColumns);
+    }
+
+    private int gridX() {
+        int contentWidth = visibleColumns * SLOT_SIZE;
+        return x + Math.max(PADDING, (width() - contentWidth) / 2);
     }
 
     private void clampLayout() {
-        visibleColumns = clampColumns(visibleColumns);
+        layoutColumns = clampColumns(layoutColumns);
+        visibleColumns = Math.max(1, Math.min(layoutColumns, visibleColumns));
         visibleRows = Math.max(1, Math.min(totalRows(), visibleRows));
         clampScroll();
     }
 
     private void clampScroll() {
-        scrollSlot = Math.max(0, Math.min(maxScrollSlot(), scrollSlot));
+        scrollRow = Math.max(0, Math.min(maxScrollRow(), scrollRow));
+        scrollColumn = Math.max(0, Math.min(maxScrollColumn(), scrollColumn));
     }
 
     private int clampColumns(int columns) {
-        return Math.max(1, Math.min(Math.min(MAX_COLUMNS, capacity), columns));
+        return Math.max(1, Math.min(capacity, columns));
     }
 
     private static int clampCapacity(int capacity) {
@@ -339,6 +438,14 @@ final class BackpackWindow {
 
     private static int roundedSlots(double pixels) {
         return (int) Math.round(pixels / SLOT_SIZE);
+    }
+
+    private static int rowsForColumns(int capacity, int columns) {
+        return (capacity + columns - 1) / columns;
+    }
+
+    private static int columnsForRows(int capacity, int rows) {
+        return (capacity + rows - 1) / rows;
     }
 
     private static int widthForColumns(int columns) {
