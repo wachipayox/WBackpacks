@@ -25,6 +25,10 @@ final class BackpackWindowStateStore {
         return Boolean.parseBoolean(values.getProperty(key(id, "minimized"), "false"));
     }
 
+    boolean containerMode(String id) {
+        return Boolean.parseBoolean(values.getProperty(key(id, "containerMode"), "false"));
+    }
+
     int x(String id, int fallback) {
         return readInt(key(id, "x"), fallback);
     }
@@ -55,14 +59,11 @@ final class BackpackWindowStateStore {
             return parseInt(modern, 0);
         }
 
-        // Migrate the previous single linear scroll position as vertical scroll only.
         int legacy = readInt(key(id, "scrollSlot"), readInt(key(id, "scroll"), 0));
         return legacy / Math.max(1, legacyColumns);
     }
 
     int scrollColumn(String id) {
-        // Old versions used the remainder of one linear offset as a fake horizontal scrollbar.
-        // Do not migrate that remainder: horizontal scroll now means real logical columns off-screen.
         return readInt(key(id, "scrollColumn"), 0);
     }
 
@@ -70,6 +71,7 @@ final class BackpackWindowStateStore {
         String id = window.id();
         values.setProperty(key(id, "open"), Boolean.toString(window.isOpen()));
         values.setProperty(key(id, "minimized"), Boolean.toString(window.isMinimized()));
+        values.setProperty(key(id, "containerMode"), Boolean.toString(window.isContainerMode()));
         values.setProperty(key(id, "x"), Integer.toString(window.x()));
         values.setProperty(key(id, "y"), Integer.toString(window.y()));
         values.setProperty(key(id, "z"), Integer.toString(window.zIndex()));
