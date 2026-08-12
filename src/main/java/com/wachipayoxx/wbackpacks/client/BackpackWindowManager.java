@@ -65,15 +65,20 @@ public final class BackpackWindowManager {
         int fallbackY = Math.max(8, (minecraft.getWindow().getGuiScaledHeight() - 90) - cascade);
         int defaultColumns = Math.min(9, Math.max(1, capacity));
         int defaultRows = Math.min(6, (Math.max(1, capacity) + defaultColumns - 1) / defaultColumns);
+        int savedColumns = state.columns(id, defaultColumns);
+        int savedLayoutColumns = state.layoutColumns(id, savedColumns);
         BackpackWindow window = new BackpackWindow(
                 id,
                 capacity,
                 state.x(id, fallbackX),
                 state.y(id, fallbackY),
                 Math.max(state.z(id, nextZ), nextZ++),
-                state.scroll(id),
-                state.columns(id, defaultColumns),
-                state.rows(id, defaultRows));
+                savedColumns,
+                state.rows(id, defaultRows),
+                savedLayoutColumns,
+                state.scrollColumn(id),
+                state.scrollRow(id, savedLayoutColumns),
+                state.minimized(id));
         windows.put(id, window);
         bringToFront(window);
         restoreRequests.remove(id);
@@ -83,8 +88,6 @@ public final class BackpackWindowManager {
     public void render(AbstractContainerScreen<?> screen, GuiGraphics graphics, int mouseX, int mouseY) {
         requestPersistedWindows(screen);
 
-        // Vanilla inventory entity previews and item rendering use depth. Flush everything that the
-        // underlying screen queued, then draw WBackpacks as a true overlay with depth disabled.
         graphics.flush();
         RenderSystem.disableDepthTest();
         graphics.pose().pushPose();
@@ -105,7 +108,7 @@ public final class BackpackWindowManager {
             }
         }
 
-        if (!screen.getMenu().getCarried().isEmpty() && hovered != null) {
+        if (!screen.getMenu().getCarried().isEmpty() && hovered != null && !hovered.isMinimized()) {
             ItemStack carried = screen.getMenu().getCarried();
             graphics.renderItem(carried, mouseX - 8, mouseY - 8);
             graphics.renderItemDecorations(Minecraft.getInstance().font, carried, mouseX - 8, mouseY - 8);
@@ -131,7 +134,8 @@ public final class BackpackWindowManager {
                         window.x(),
                         window.y(),
                         window.visibleColumns(),
-                        window.visibleRows());
+                        window.visibleRows(),
+                        window.layoutColumns());
                 return true;
             }
         }
@@ -143,6 +147,13 @@ public final class BackpackWindowManager {
         bringToFront(window);
         if (button == GLFW.GLFW_MOUSE_BUTTON_LEFT && window.closeContains(mouseX, mouseY)) {
             window.setOpen(false);
+            state.save(window);
+            return true;
+        }
+        if (button == GLFW.GLFW_MOUSE_BUTTON_LEFT && window.minimizeContains(mouseX, mouseY)) {
+            window.setMinimized(!window.isMinimized());
+            Minecraft minecraft = Minecraft.getInstance();
+            window.clampToScreen(minecraft.getWindow().getGuiScaledWidth(), minecraft.getWindow().getGuiScaledHeight());
             state.save(window);
             return true;
         }
@@ -170,6 +181,7 @@ public final class BackpackWindowManager {
                     resizing.originalY(),
                     resizing.originalColumns(),
                     resizing.originalRows(),
+                    resizing.originalLayoutColumns(),
                     mouseX - resizing.startMouseX(),
                     mouseY - resizing.startMouseY(),
                     screenWidth,
@@ -261,9 +273,10 @@ public final class BackpackWindowManager {
     }
 
     private void updateCursor(double mouseX, double mouseY) {
-        BackpackWindow.ResizeEdge edge = resizing == null
-                ? (topResizeAt(mouseX, mouseY) == null ? BackpackWindow.ResizeEdge.NONE : topResizeAt(mouseX, mouseY).edge())
-                : resizing.edge();
+        ResizeTarget hoverTarget = resizing == null ? topResizeAt(mouseX, mouseY) : null;
+        BackpackWindow.ResizeEdge edge = resizing != null
+                ? resizing.edge()
+                : hoverTarget == null ? BackpackWindow.ResizeEdge.NONE : hoverTarget.edge();
         setCursor(cursorFor(edge));
     }
 
@@ -332,6 +345,7 @@ public final class BackpackWindowManager {
             int originalX,
             int originalY,
             int originalColumns,
-            int originalRows) {
+            int originalRows,
+            int originalLayoutColumns) {
     }
 }
