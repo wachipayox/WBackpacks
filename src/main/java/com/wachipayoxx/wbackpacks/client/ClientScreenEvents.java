@@ -32,7 +32,19 @@ public final class ClientScreenEvents {
         }
 
         BackpackWindowManager manager = BackpackWindowManager.get();
-        if (manager.mousePressed(event.getMouseX(), event.getMouseY(), event.getButton(), Screen.hasShiftDown())) {
+        if (manager.mousePressed(screen, event.getMouseX(), event.getMouseY(), event.getButton(), Screen.hasShiftDown())) {
+            event.setCanceled(true);
+            return;
+        }
+
+        Slot slot = screen.getSlotUnderMouse();
+        int menuSlot = slot == null ? -1 : screen.getMenu().slots.indexOf(slot);
+
+        if (event.getButton() == GLFW.GLFW_MOUSE_BUTTON_LEFT
+                && Screen.hasShiftDown()
+                && screen.getMenu().getCarried().isEmpty()
+                && menuSlot >= 0
+                && manager.tryQuickMoveFromMenu(screen, slot, menuSlot)) {
             event.setCanceled(true);
             return;
         }
@@ -40,15 +52,14 @@ public final class ClientScreenEvents {
         if (event.getButton() != GLFW.GLFW_MOUSE_BUTTON_RIGHT || !Screen.hasControlDown()) {
             return;
         }
-        Slot slot = screen.getSlotUnderMouse();
-        if (slot == null || screen.getMenu().slots.indexOf(slot) < 0 || !BackpackAccess.isBackpack(slot.getItem())) {
+        if (slot == null || menuSlot < 0 || !BackpackAccess.isBackpack(slot.getItem())) {
             return;
         }
         if (screen.getMinecraft().player == null || slot.container != screen.getMinecraft().player.getInventory()) {
             return;
         }
 
-        PacketDistributor.sendToServer(new RequestOpenBackpackPayload(screen.getMenu().slots.indexOf(slot)));
+        PacketDistributor.sendToServer(new RequestOpenBackpackPayload(menuSlot));
         event.setCanceled(true);
     }
 

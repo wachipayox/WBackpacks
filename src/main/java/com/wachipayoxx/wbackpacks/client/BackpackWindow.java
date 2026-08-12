@@ -14,8 +14,10 @@ final class BackpackWindow {
     static final int RESIZE_MARGIN = 4;
     private static final int SLOT_SIZE = 18;
     private static final int PADDING = 5;
-    private static final int TITLE_BUTTON_WIDTH = 14;
-    private static final int MIN_WINDOW_WIDTH = TITLE_BUTTON_WIDTH * 2;
+    private static final int TITLE_BUTTON_WIDTH = 9;
+    private static final int MIN_WINDOW_WIDTH = TITLE_BUTTON_WIDTH * 3;
+    private static final int ACTIVE_TITLE_COLOR = 0xF02E2E2E;
+    private static final int INACTIVE_TITLE_COLOR = 0xF03A3A3A;
 
     enum ResizeEdge {
         NONE(false, false, false, false),
@@ -66,6 +68,7 @@ final class BackpackWindow {
 
     private boolean open = true;
     private boolean minimized;
+    private boolean containerMode;
 
     BackpackWindow(
             String id,
@@ -78,7 +81,8 @@ final class BackpackWindow {
             int layoutColumns,
             int visibleColumns,
             int visibleRows,
-            boolean minimized) {
+            boolean minimized,
+            boolean containerMode) {
         this.id = id;
         this.capacity = clampCapacity(capacity);
         this.x = x;
@@ -90,6 +94,7 @@ final class BackpackWindow {
         this.scrollRow = Math.max(0, scrollRow);
         this.scrollColumn = Math.max(0, scrollColumn);
         this.minimized = minimized;
+        this.containerMode = containerMode;
         clampLayout();
     }
 
@@ -104,6 +109,7 @@ final class BackpackWindow {
     int scrollColumn() { return scrollColumn; }
     boolean isOpen() { return open; }
     boolean isMinimized() { return minimized; }
+    boolean isContainerMode() { return containerMode; }
 
     void setCapacity(int capacity) {
         this.capacity = clampCapacity(capacity);
@@ -113,6 +119,7 @@ final class BackpackWindow {
     void setOpen(boolean open) { this.open = open; }
     void setZIndex(int zIndex) { this.zIndex = zIndex; }
     void setMinimized(boolean minimized) { this.minimized = minimized; }
+    void setContainerMode(boolean containerMode) { this.containerMode = containerMode; }
     void moveTo(int x, int y) { this.x = x; this.y = y; }
 
     int totalRows() {
@@ -143,6 +150,13 @@ final class BackpackWindow {
         return titleContains(mouseX, mouseY)
                 && mouseX >= x + width() - TITLE_BUTTON_WIDTH * 2
                 && mouseX < x + width() - TITLE_BUTTON_WIDTH;
+    }
+
+    boolean interactionModeContains(double mouseX, double mouseY, boolean containerAvailable) {
+        return containerAvailable
+                && titleContains(mouseX, mouseY)
+                && mouseX >= x + width() - TITLE_BUTTON_WIDTH * 3
+                && mouseX < x + width() - TITLE_BUTTON_WIDTH * 2;
     }
 
     ResizeEdge resizeEdgeAt(double mouseX, double mouseY) {
@@ -213,44 +227,33 @@ final class BackpackWindow {
 
         if (horizontalChanged && !verticalChanged) {
             if (widthExpanded && horizontalFlow) {
-                // A short/wide layout that is being expanded sideways should stay short/wide.
-                // Reveal more of the columns that already exist instead of turning them back into rows.
                 layoutColumns = originalLayoutColumns;
                 visibleColumns = Math.min(requestedColumns, layoutColumns);
                 visibleRows = Math.min(originalVisibleRows, totalRows());
             } else {
-                // Width is authoritative: reflow into exactly this many logical columns.
-                // Any hidden content is therefore genuinely below the viewport.
                 layoutColumns = requestedColumns;
                 visibleColumns = requestedColumns;
                 visibleRows = Math.min(originalVisibleRows, totalRows());
             }
         } else if (verticalChanged && !horizontalChanged) {
             if (heightExpanded && verticalFlow) {
-                // A narrow/tall layout that is being expanded downward should stay narrow/tall.
-                // Reveal more existing rows instead of reinterpreting them as off-screen columns.
                 layoutColumns = originalLayoutColumns;
                 visibleColumns = Math.min(originalVisibleColumns, layoutColumns);
                 visibleRows = Math.min(requestedRows, totalRows());
             } else {
-                // Height is authoritative: reflow into enough logical columns to keep the requested rows.
-                // If those logical columns exceed the current viewport width, that is genuine horizontal overflow.
                 layoutColumns = columnsForRows(capacity, requestedRows);
                 visibleRows = Math.min(requestedRows, totalRows());
                 visibleColumns = Math.min(originalVisibleColumns, layoutColumns);
             }
         } else if ((long) requestedColumns * requestedRows >= capacity) {
-            // The requested rectangle can contain everything, so hug the real content and avoid dead space.
             layoutColumns = requestedColumns;
             visibleColumns = requestedColumns;
             visibleRows = Math.min(requestedRows, totalRows());
         } else if (Math.abs(deltaX) >= Math.abs(deltaY)) {
-            // Corner resize dominated by width: vertical overflow.
             layoutColumns = requestedColumns;
             visibleColumns = requestedColumns;
             visibleRows = Math.min(requestedRows, totalRows());
         } else {
-            // Corner resize dominated by height: horizontal overflow.
             layoutColumns = columnsForRows(capacity, requestedRows);
             visibleRows = Math.min(requestedRows, totalRows());
             visibleColumns = Math.min(requestedColumns, layoutColumns);
@@ -318,9 +321,14 @@ final class BackpackWindow {
         return slot < capacity ? slot : -1;
     }
 
-    void clickSlot(int slot, int button, boolean shift) {
+    void clickSlot(int slot, int button, boolean shift, boolean containerAvailable) {
         if (slot >= 0 && slot < capacity) {
-            PacketDistributor.sendToServer(new BackpackSlotClickPayload(id, slot, button, shift));
+            PacketDistributor.sendToServer(new BackpackSlotClickPayload(
+                    id,
+                    slot,
+                    button,
+                    shift,
+                    shift && containerAvailable && containerMode));
         }
     }
 
@@ -335,17 +343,25 @@ final class BackpackWindow {
         return handler == null || slot < 0 || slot >= handler.getSlots() ? ItemStack.EMPTY : handler.getStackInSlot(slot);
     }
 
-    void render(GuiGraphics graphics, int mouseX, int mouseY) {
+    void render(GuiGraphics graphics, int mouseX, int mouseY, boolean active, boolean containerAvailable) {
         Minecraft minecraft = Minecraft.getInstance();
         clampToScreen(graphics.guiWidth(), graphics.guiHeight());
 
         int right = x + width();
         int bottom = y + height();
-        graphics.fill(x, y, right, bottom, minimized ? 0xF03A3A3A : 0xE8C6C6C6);
-        graphics.fill(x + 1, y + 1, right - 1, y + TITLE_HEIGHT, 0xF03A3A3A);
+        int titleColor = active ? ACTIVE_TITLE_COLOR : INACTIVE_TITLE_COLOR;
+        graphics.fill(x, y, right, bottom, minimized ? titleColor : 0xE8C6C6C6);
+        graphics.fill(x + 1, y + 1, right - 1, y + TITLE_HEIGHT, titleColor);
 
-        int minimizeX = right - TITLE_BUTTON_WIDTH * 2;
         int closeX = right - TITLE_BUTTON_WIDTH;
+        int minimizeX = closeX - TITLE_BUTTON_WIDTH;
+        int modeX = minimizeX - TITLE_BUTTON_WIDTH;
+
+        if (containerAvailable) {
+            graphics.fill(modeX, y + 1, minimizeX, y + TITLE_HEIGHT,
+                    interactionModeContains(mouseX, mouseY, true) ? 0xFF666666 : 0xFF555555);
+            renderInteractionModeIcon(graphics, modeX, y, containerMode);
+        }
         graphics.fill(minimizeX, y + 1, closeX, y + TITLE_HEIGHT,
                 minimizeContains(mouseX, mouseY) ? 0xFF666666 : 0xFF555555);
         graphics.fill(closeX, y + 1, right - 1, y + TITLE_HEIGHT,
@@ -356,8 +372,8 @@ final class BackpackWindow {
         if (width() >= 82) {
             graphics.drawString(minecraft.font, title, x + 5, y + 5, 0xFFFFFFFF, false);
         }
-        graphics.drawString(minecraft.font, minimized ? "+" : "-", minimizeX + 5, y + 5, 0xFFFFFFFF, false);
-        graphics.drawString(minecraft.font, "×", closeX + 4, y + 5, 0xFFFFFFFF, false);
+        graphics.drawString(minecraft.font, minimized ? "+" : "-", minimizeX + 2, y + 5, 0xFFFFFFFF, false);
+        graphics.drawString(minecraft.font, "×", closeX + 1, y + 5, 0xFFFFFFFF, false);
 
         if (minimized) {
             return;
@@ -393,6 +409,21 @@ final class BackpackWindow {
         }
 
         renderScrollIndicators(graphics, right, bottom, gridX, gridY);
+    }
+
+    private void renderInteractionModeIcon(GuiGraphics graphics, int buttonX, int titleY, boolean chestMode) {
+        int cx = buttonX + 4;
+        int cy = titleY + 8;
+        if (chestMode) {
+            graphics.fill(cx - 3, cy - 3, cx + 4, cy - 1, 0xFFE6E6E6);
+            graphics.fill(cx - 3, cy, cx + 4, cy + 4, 0xFFE6E6E6);
+            graphics.fill(cx, cy - 1, cx + 1, cy + 2, 0xFF555555);
+        } else {
+            graphics.fill(cx - 3, cy - 3, cx - 1, cy - 1, 0xFFE6E6E6);
+            graphics.fill(cx + 1, cy - 3, cx + 3, cy - 1, 0xFFE6E6E6);
+            graphics.fill(cx - 3, cy + 1, cx - 1, cy + 3, 0xFFE6E6E6);
+            graphics.fill(cx + 1, cy + 1, cx + 3, cy + 3, 0xFFE6E6E6);
+        }
     }
 
     private void renderScrollIndicators(GuiGraphics graphics, int right, int bottom, int gridX, int gridY) {
